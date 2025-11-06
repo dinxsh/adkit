@@ -1,6 +1,6 @@
 # Autonomous AI Advertising Agents with x402
 
-> **Demonstrating autonomous agent-to-agent commerce through x402 micropayments on Base**
+> **Demonstrating autonomous agent-to-agent commerce through x402 micropayments on Solana**
 
 Intelligent AI agents that autonomously research websites, analyze traffic data, compete for advertising space, and generate creative content - all coordinated through economic signals powered by x402 micropayments.
 
@@ -30,11 +30,11 @@ This project demonstrates **autonomous AI advertising agents** that use **x402 m
 ### Prerequisites
 
 - Node.js 18+
-- [Coinbase CDP Account](https://portal.cdp.coinbase.com/) (for server wallet)
 - [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) (free tier works)
 - [Google Gemini API Key](https://makersuite.google.com/app/apikey) (for AI agents)
-- [Firecrawl API Key](https://firecrawl.dev/) (for web scraping)
+- [Firecrawl API Key](https://firecrawl.dev/) (optional - for web scraping)
 - [Freepik API Key](https://www.freepik.com/api) (for image generation)
+- Solana CLI (optional - for wallet management)
 
 ### 1. Clone and Install
 
@@ -46,60 +46,70 @@ npm install
 
 ### 2. Configure Server Environment
 
-Create `.env.local`:
+Copy `.env.example` to `.env.local` and fill in values:
 
 ```bash
-# CDP Server Wallet (get from https://portal.cdp.coinbase.com/)
-CDP_API_KEY_ID=your-cdp-key-id
-CDP_API_KEY_SECRET=your-cdp-secret
-CDP_WALLET_SECRET=your-wallet-secret
+cp .env.example .env.local
+```
 
-# MongoDB (get from https://www.mongodb.com/cloud/atlas)
-MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/
-MONGODB_DB_NAME=ad-bid
+**Required Variables:**
 
-# x402
-FACILITATOR_URL=https://x402.org/facilitator
+- `SOLANA_NETWORK=devnet` (or `mainnet-beta` for production)
+- `SERVER_WALLET_PRIVATE_KEY` - Generate Solana keypair (see below)
+- `ADDRESS` - Your Solana public key (from keypair)
+- `MONGODB_URI` - Get from MongoDB Atlas
+- `MONGODB_DB_NAME=ad-bid`
+- `FREEPIK_API_KEY` - Get from https://www.freepik.com/api
+- `FIRECRAWL_API_KEY` - Optional, get from https://firecrawl.dev/
 
-# External Services
-FIRECRAWL_API_KEY=your-firecrawl-key  # Get from https://firecrawl.dev/
-FREEPIK_API_KEY=your-freepik-key      # Get from https://www.freepik.com/api
+**Generate Solana Keypair:**
+
+```bash
+node -e "const {Keypair} = require('@solana/web3.js'); const bs58 = require('bs58'); const kp = Keypair.generate(); console.log('Private:', bs58.encode(kp.secretKey)); console.log('Public:', kp.publicKey.toBase58());"
 ```
 
 ### 3. Configure Agent Environment
 
-Create `agents/.env`:
+Copy `agents/.env.example` to `agents/.env`:
 
 ```bash
-# Crossmint Agent
-CROSSMINT_PRIVATE_KEY=0x...  # Generate with: openssl rand -hex 32
-CROSSMINT_AGENT_NAME=CrossmintAgent
-CROSSMINT_MAX_BID=50
-
-# Coinbase CDP Agent
-CDP_AGENT_PRIVATE_KEY=0x...  # Generate with: openssl rand -hex 32
-CDP_AGENT_NAME=CoinbaseCDPAgent
-CDP_MAX_BID=75
-
-# Google Gemini AI
-GEMINI_API_KEY=your-gemini-api-key
-
-# Server
-SERVER_URL=http://localhost:3000
-
-# Ad Spots (comma-separated list)
-AD_SPOTS=devnews-banner,devnews-sidebar
+cp agents/.env.example agents/.env
 ```
 
-### 4. Fund Wallets
+**Required Variables:**
+
+- `AGENT_A_PRIVATE_KEY` - Solana private key (base58) for Coinbase CDP agent
+- `AGENT_B_PRIVATE_KEY` - Solana private key (base58) for Crossmint agent
+- `BID_GEMINI_API_KEY` - Google Gemini API key
+- `BID_SERVER_URL=http://localhost:3000`
+
+Generate agent keypairs using the same method as server wallet.
+
+### 4. Fund Wallets (Devnet)
+
+**Fund Server Wallet:**
 
 ```bash
-# Fund server wallet with ETH and USDC (Base Sepolia for testing, Base Mainnet for production)
-npm run fund
+# Get SOL for transaction fees
+solana airdrop 1 <SERVER_PUBLIC_KEY> --url devnet
 
-# Fund agent wallets with USDC
-npm run fund:agents
+# Get USDC from devnet faucet or Jupiter
+# Visit: https://faucet.solana.com/ or use Jupiter swap
 ```
+
+**Fund Agent Wallets:**
+
+```bash
+# Fund Agent A
+solana airdrop 1 <AGENT_A_PUBLIC_KEY> --url devnet
+# Then swap some SOL for USDC
+
+# Fund Agent B
+solana airdrop 1 <AGENT_B_PUBLIC_KEY> --url devnet
+# Then swap some SOL for USDC
+```
+
+**Note**: For production (mainnet), transfer real SOL and USDC from your wallet.
 
 ### 5. Run the System
 
@@ -186,10 +196,10 @@ http://localhost:3000/auction/devnews-sidebar
 
 ### Two Network Architecture
 
-| Network      | Purpose                          | Payments                     |
-| ------------ | -------------------------------- | ---------------------------- |
-| Base Sepolia | Ad bidding & analytics (testnet) | $0.01-100 USDC (test tokens) |
-| Base Mainnet | External services (production)   | $0.01-0.50 USDC (real)       |
+| Network        | Purpose                          | Payments                     |
+| -------------- | -------------------------------- | ---------------------------- |
+| Solana Devnet  | Ad bidding & analytics (testnet) | $0.01-100 USDC (test tokens) |
+| Solana Mainnet | External services (production)   | $0.01-0.50 USDC (real)       |
 
 **Why?** Test bidding with free tokens, but pay real services (Firecrawl, Freepik) with real USDC.
 

@@ -1,30 +1,13 @@
 import axios from "axios";
 import { withPaymentInterceptor } from "x402-axios";
-import {
-  createWalletClient,
-  http,
-  publicActions,
-  createPublicClient,
-} from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import { baseSepolia, base } from "viem/chains";
-import { Hex } from "viem";
+import { createSigner, type Signer } from "x402/types";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddress, getAccount } from "@solana/spl-token";
+import bs58 from "bs58";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { generateText, tool } from "ai";
 import { z } from "zod";
-
-const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
-
-// ERC-20 ABI for balanceOf
-const ERC20_ABI = [
-  {
-    name: "balanceOf",
-    type: "function",
-    stateMutability: "view",
-    inputs: [{ name: "account", type: "address" }],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-] as const;
+import { SOLANA_DEVNET_USDC } from "../../lib/x402-config";
 
 export interface BrandIdentity {
   brandName: string;
@@ -51,24 +34,23 @@ interface BidContext {
   lastRefundAmount?: number;
 }
 
-interface BidDecision {
-  thinking: string;
-  proposedAmount: number;
-  strategy: string;
-  reasoning: string;
-  confidence: number;
-}
-
 export class IntelligentBiddingAgent {
-  protected wallet; // Base Sepolia for bidding
-  protected mainnetWallet; // Base Mainnet for Freepik
-  protected axiosWithPayment; // Base Sepolia
-  protected axiosWithMainnetPayment; // Base Mainnet
+  protected wallet: Keypair; // Solana Devnet for bidding
+  protected mainnetWallet: Keypair; // Solana Mainnet for Freepik
+  protected devnetSigner: Promise<Signer>; // x402 Signer for Devnet
+  protected mainnetSigner: Promise<Signer>; // x402 Signer for Mainnet
+  protected connection: Connection; // Solana Devnet connection
+  protected mainnetConnection: Connection; // Solana Mainnet connection
+  protected axiosWithPayment: Promise<
+    ReturnType<typeof withPaymentInterceptor>
+  >; // Solana Devnet
+  protected axiosWithMainnetPayment: Promise<
+    ReturnType<typeof withPaymentInterceptor>
+  >; // Solana Mainnet
   protected agentName: string;
   protected maxBid: number;
   protected serverUrl: string;
   protected isActive: boolean = true;
-  protected publicClient;
   private monitoringInterval: NodeJS.Timeout | null = null;
   private auctionEndMonitoringInterval: NodeJS.Timeout | null = null;
   protected model;
@@ -81,7 +63,7 @@ export class IntelligentBiddingAgent {
   protected refundPending: boolean = false;
 
   constructor(config: {
-    privateKey: Hex;
+    privateKey: string; // Base58 or hex encoded private key
     agentName: string;
     maxBid: number;
     serverUrl: string;
@@ -93,40 +75,65 @@ export class IntelligentBiddingAgent {
     this.serverUrl = config.serverUrl;
     this.brandIdentity = config.brandIdentity;
 
-    // Create wallet client for BIDDING (Base Sepolia testnet)
-    this.wallet = createWalletClient({
-      chain: baseSepolia,
-      transport: http(),
-      account: privateKeyToAccount(config.privateKey),
-    }).extend(publicActions);
+    // Parse private key (support both base58 and hex)
+    let secretKey: Uint8Array;
+    try {
+      // Try base58 first (Solana standard)
+      secretKey = bs58.decode(config.privateKey);
+    } catch {
+      // If that fails, try hex (for compatibility)
+      if (config.privateKey.startsWith("0x")) {
+        secretKey = new Uint8Array(
+          Buffer.from(config.privateKey.slice(2), "hex")
+        );
+      } else {
+        secretKey = new Uint8Array(Buffer.from(config.privateKey, "hex"));
+      }
+    }
 
-    // Create wallet client for FREEPIK (Base Mainnet)
-    this.mainnetWallet = createWalletClient({
-      chain: base, // MAINNET!
-      transport: http(),
-      account: privateKeyToAccount(config.privateKey),
-    }).extend(publicActions);
+    // Create wallet keypair for BIDDING (Solana Devnet)
+    this.wallet = Keypair.fromSecretKey(secretKey);
 
-    // Create public client for reading balances (Base Sepolia)
-    this.publicClient = createPublicClient({
-      chain: baseSepolia,
-      transport: http(),
-    });
+    // Create wallet keypair for FREEPIK (Solana Mainnet) - same keypair, different network
+    this.mainnetWallet = Keypair.fromSecretKey(secretKey);
 
-    // Create axios client with x402 payment interceptor (Base Sepolia for bidding)
-    this.axiosWithPayment = withPaymentInterceptor(
-      axios.create({
-        headers: { "X-Agent-ID": this.agentName },
-      }),
-      this.wallet as any // Type assertion for viem version compatibility
+    // Create Solana connections
+    const devnetRpc =
+      process.env.SOLANA_DEVNET_RPC_URL || "https://api.devnet.solana.com";
+    const mainnetRpc =
+      process.env.SOLANA_MAINNET_RPC_URL ||
+      "https://api.mainnet-beta.solana.com";
+
+    this.connection = new Connection(devnetRpc, "confirmed");
+    this.mainnetConnection = new Connection(mainnetRpc, "confirmed");
+
+    // Create x402 Signers from Solana Keypairs
+    // x402's createSigner properly wraps Solana Keypair to match Signer interface
+    // createSigner takes (network, privateKey) where network is "solana" or "solana-devnet"
+    const devnetPrivateKey = bs58.encode(this.wallet.secretKey);
+    const mainnetPrivateKey = bs58.encode(this.mainnetWallet.secretKey);
+
+    this.devnetSigner = createSigner("solana-devnet", devnetPrivateKey);
+    this.mainnetSigner = createSigner("solana", mainnetPrivateKey);
+
+    // Create axios client with x402 payment interceptor (Solana Devnet for bidding)
+    this.axiosWithPayment = this.devnetSigner.then((signer) =>
+      withPaymentInterceptor(
+        axios.create({
+          headers: { "X-Agent-ID": this.agentName },
+        }),
+        signer
+      )
     );
 
-    // Create axios client for Freepik (Base Mainnet)
-    this.axiosWithMainnetPayment = withPaymentInterceptor(
-      axios.create({
-        headers: { "X-Agent-ID": this.agentName },
-      }),
-      this.mainnetWallet as any
+    // Create axios client for Freepik (Solana Mainnet)
+    this.axiosWithMainnetPayment = this.mainnetSigner.then((signer) =>
+      withPaymentInterceptor(
+        axios.create({
+          headers: { "X-Agent-ID": this.agentName },
+        }),
+        signer
+      )
     );
 
     // Initialize LLM with Google Gemini
@@ -137,10 +144,10 @@ export class IntelligentBiddingAgent {
 
     console.log(`🧠 ${this.agentName} initialized with AI reasoning (Gemini)`);
     console.log(
-      `   Bidding Wallet (Base Sepolia): ${this.wallet.account.address}`
+      `   Bidding Wallet (Solana Devnet): ${this.wallet.publicKey.toBase58()}`
     );
     console.log(
-      `   Freepik Wallet (Base Mainnet): ${this.mainnetWallet.account.address}`
+      `   Freepik Wallet (Solana Mainnet): ${this.mainnetWallet.publicKey.toBase58()}`
     );
   }
 
@@ -160,7 +167,7 @@ export class IntelligentBiddingAgent {
           console.log(
             `\n🎨 [${this.agentName}] Generating ad image with prompt: "${prompt}"`
           );
-          console.log(`💰 Using Base MAINNET wallet for Freepik payment`);
+          console.log(`💰 Using Solana MAINNET wallet for Freepik payment`);
 
           // Broadcast starting event
           try {
@@ -175,13 +182,14 @@ export class IntelligentBiddingAgent {
                 )}..."`,
               }
             );
-          } catch (e) {
-            console.warn(`Failed to broadcast image start event:`, e);
+          } catch (error) {
+            console.warn(`Failed to broadcast image start event:`, error);
           }
 
           // Call server endpoint (which forwards to Freepik with x402)
           // Use MAINNET axios client for Freepik payments
-          const response = await this.axiosWithMainnetPayment.post(
+          const mainnetClient = await this.axiosWithMainnetPayment;
+          const response = await mainnetClient.post(
             `${this.serverUrl}/api/generate-ad-image`,
             {
               adSpotId: this.currentAdSpotId,
@@ -292,15 +300,19 @@ export class IntelligentBiddingAgent {
                       }s elapsed (status: ${status})`,
                     }
                   );
-                } catch (e) {
+                } catch {
                   // Silently ignore broadcast errors
                 }
               }
-            } catch (error: any) {
-              if (error.response?.status !== 404) {
+            } catch (error: unknown) {
+              const errorMessage =
+                error instanceof Error ? error.message : String(error);
+              const status = (error as { response?: { status?: number } })
+                ?.response?.status;
+              if (status !== 404) {
                 console.error(
                   `⚠️  [${this.agentName}] Error checking status:`,
-                  error.message
+                  errorMessage
                 );
               }
             }
@@ -325,10 +337,12 @@ export class IntelligentBiddingAgent {
           }
 
           return `ERROR: Timeout waiting for image generation after 2 minutes`;
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
           console.error(
             `❌ [${this.agentName}] Image generation error:`,
-            error.message
+            errorMessage
           );
 
           // Broadcast error event
@@ -338,14 +352,14 @@ export class IntelligentBiddingAgent {
               {
                 agentId: this.agentName,
                 status: "failed",
-                message: `Error: ${error.message}`,
+                message: `Error: ${errorMessage}`,
               }
             );
           } catch (e) {
             console.warn(`Failed to broadcast error event:`, e);
           }
 
-          return `ERROR: ${error.message}`;
+          return `ERROR: ${errorMessage}`;
         }
       },
     });
@@ -418,12 +432,14 @@ export class IntelligentBiddingAgent {
             JSON.stringify(result)
           );
           return JSON.stringify(result);
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
           console.error(
             `❌ [${this.agentName}] Failed to get auction state:`,
-            error.message
+            errorMessage
           );
-          return JSON.stringify({ success: false, error: error.message });
+          return JSON.stringify({ success: false, error: errorMessage });
         }
       },
     });
@@ -483,7 +499,8 @@ export class IntelligentBiddingAgent {
           );
 
           // First request with proposed bid (no payment yet)
-          const response = await this.axiosWithPayment.post(
+          const devnetClient = await this.axiosWithPayment;
+          const response = await devnetClient.post(
             `${this.serverUrl}/api/bid/${spotId}`,
             {
               thinking: reasoning,
@@ -526,17 +543,30 @@ export class IntelligentBiddingAgent {
           }
 
           return JSON.stringify({ success: false, message: "Bid failed" });
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          const axiosError = error as {
+            response?: { status?: number; data?: unknown };
+          };
           console.error(
             `❌ [${this.agentName}] Bid request error:`,
-            error.message
+            errorMessage
           );
-          console.error(`   Status:`, error.response?.status);
-          console.error(`   Data:`, error.response?.data);
+          console.error(`   Status:`, axiosError.response?.status);
+          console.error(`   Data:`, axiosError.response?.data);
 
           // Handle 400 Bad Request (proposal rejected as too low)
-          if (error.response?.status === 400) {
-            const rejection = error.response.data;
+          if (axiosError.response?.status === 400) {
+            const rejection = axiosError.response.data as {
+              negotiation?: {
+                yourProposal?: number;
+                minimumToWin?: number;
+                currentBid?: number;
+                message?: string;
+                suggestion?: number;
+              };
+            };
             return JSON.stringify({
               success: false,
               proposalRejected: true,
@@ -549,8 +579,15 @@ export class IntelligentBiddingAgent {
           }
 
           // Handle 402 Payment Required (needs payment)
-          if (error.response?.status === 402) {
-            const paymentReq = error.response.data;
+          if (axiosError.response?.status === 402) {
+            const paymentReq = axiosError.response.data as {
+              negotiation?: {
+                minimumToWin?: number;
+                currentBid?: number;
+                message?: string;
+                suggestion?: number;
+              };
+            };
             return JSON.stringify({
               success: false,
               needsNegotiation: true,
@@ -562,7 +599,7 @@ export class IntelligentBiddingAgent {
             });
           }
 
-          return JSON.stringify({ success: false, message: error.message });
+          return JSON.stringify({ success: false, message: errorMessage });
         }
       },
     });
@@ -576,15 +613,20 @@ export class IntelligentBiddingAgent {
   }
 
   async getUSDCBalance(): Promise<number> {
-    const balance = await this.publicClient.readContract({
-      address: USDC_BASE_SEPOLIA,
-      abi: ERC20_ABI,
-      functionName: "balanceOf",
-      args: [this.wallet.account.address],
-    });
+    try {
+      const usdcMint = new PublicKey(SOLANA_DEVNET_USDC);
+      const tokenAccount = await getAssociatedTokenAddress(
+        usdcMint,
+        this.wallet.publicKey
+      );
+      const accountInfo = await getAccount(this.connection, tokenAccount);
 
-    // USDC has 6 decimals
-    return Number(balance) / 1_000_000;
+      // USDC has 6 decimals
+      return Number(accountInfo.amount) / 1_000_000;
+    } catch {
+      // Token account doesn't exist, balance is 0
+      return 0;
+    }
   }
 
   async decideBidStrategy(adSpotId: string): Promise<void> {
@@ -626,7 +668,7 @@ Your Goal: Win the ad spot auction "${adSpotId}" by placing strategic marketing 
 Available Tools (for bidding only):
 1. get_my_balance - Check your USDC balance
 2. get_auction_state - See current bid and auction status (includes timeRemaining)
-3. place_bid - Place a bid for the ad spot (costs USDC on Base Sepolia testnet)
+3. place_bid - Place a bid for the ad spot (costs USDC on Solana Devnet)
 4. withdraw - Withdraw from auction if not worth continuing
 
 Note: generate_ad_image tool is NOT available during bidding - you will receive a separate prompt for image generation AFTER winning.
@@ -634,8 +676,8 @@ Note: generate_ad_image tool is NOT available during bidding - you will receive 
 Total Marketing Budget: $${this.maxBid.toFixed(2)} USDC
 - Ad spot bidding: Up to ~$${(this.maxBid - 0.08).toFixed(
         2
-      )} USDC (Base Sepolia testnet)
-- Creative production: ~$0.08 USDC (Base mainnet - for winning ad image)
+      )} USDC (Solana Devnet)
+- Creative production: ~$0.08 USDC (Solana Mainnet - for winning ad image)
 - Current wallet balance: $${balance.toFixed(2)} USDC
 
 ⚠️  IMPORTANT: Your TOTAL budget is $${this.maxBid.toFixed(
@@ -713,7 +755,7 @@ Think step by step and make your move!`;
           status: "thinking",
           timestamp: new Date().toISOString(),
         });
-      } catch (error) {
+      } catch {
         // Non-critical, continue even if this fails
       }
 
@@ -762,7 +804,7 @@ Think step by step and make your move!`;
             `${this.serverUrl}/api/refund-request/${adSpotId}`,
             {
               agentId: this.agentName,
-              walletAddress: this.wallet.account.address,
+              walletAddress: this.wallet.publicKey.toBase58(),
               reasoning: response.text,
             }
           );
@@ -780,10 +822,15 @@ Think step by step and make your move!`;
             this.stopRefundMonitoring();
             return;
           }
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const axiosError = error as {
+            response?: { data?: { error?: string } };
+          };
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
           console.error(
             `❌ [${this.agentName}] Withdrawal failed:`,
-            error.response?.data?.error || error.message
+            axiosError.response?.data?.error || errorMessage
           );
         }
       } else {
@@ -801,10 +848,12 @@ Think step by step and make your move!`;
             console.log(
               `📝 [${this.agentName}] Reflection submitted to server`
             );
-          } catch (error: any) {
+          } catch (error: unknown) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error);
             console.error(
               `❌ [${this.agentName}] Failed to submit reflection:`,
-              error.message
+              errorMessage
             );
           }
         }
@@ -812,14 +861,14 @@ Think step by step and make your move!`;
         // Monitoring already started before AI chat (line 610)
         // No need to start again here
       }
-    } catch (error: any) {
-      console.error(
-        `❌ [${this.agentName}] AI reasoning error:`,
-        error.message
-      );
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const axiosError = error as { response?: { status?: number } };
+      console.error(`❌ [${this.agentName}] AI reasoning error:`, errorMessage);
 
       // Fallback to simple bid if AI fails
-      if (error.response?.status === 410) {
+      if (axiosError.response?.status === 410) {
         console.log(`🏁 [${this.agentName}] Auction ended`);
         this.isActive = false;
         this.stopRefundMonitoring();
@@ -1046,10 +1095,12 @@ Be creative and specific! What will your winning ad look like?`;
             this.isActive = false;
           }
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         console.error(
           `❌ [${this.agentName}] Error monitoring auction end:`,
-          error.message
+          errorMessage
         );
       }
     }, 5000); // Check every 5 seconds

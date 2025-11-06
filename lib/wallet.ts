@@ -1,155 +1,185 @@
-import { CdpClient } from '@coinbase/cdp-sdk';
-import { encodeFunctionData, createPublicClient, http, createWalletClient, publicActions } from 'viem';
-import { baseSepolia } from 'viem/chains';
-import { privateKeyToAccount } from 'viem/accounts';
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  Transaction,
+  sendAndConfirmTransaction,
+} from "@solana/web3.js";
+import {
+  getAssociatedTokenAddress,
+  createTransferInstruction,
+  getAccount,
+} from "@solana/spl-token";
+import bs58 from "bs58";
+import { SOLANA_DEVNET_USDC, SOLANA_MAINNET_USDC } from "./x402-config";
 
-let cdp: CdpClient;
-let serverAccount: Awaited<ReturnType<CdpClient['evm']['getAccount']>> | undefined;
+let connection: Connection;
+let serverKeypair: Keypair | null = null;
 
-// ERC-20 ABI for transfer function
-const ERC20_ABI = [
-  {
-    name: 'transfer',
-    type: 'function',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'to', type: 'address' },
-      { name: 'amount', type: 'uint256' }
-    ],
-    outputs: [{ name: '', type: 'bool' }]
-  },
-  {
-    name: 'balanceOf',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ name: 'account', type: 'address' }],
-    outputs: [{ name: '', type: 'uint256' }]
-  }
-] as const;
-
-const USDC_BASE_SEPOLIA = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
-
-export async function initializeWallet() {
-  if (cdp && serverAccount) {
-    return { cdp, serverAccount };
+// Initialize Solana connection
+export function getConnection(): Connection {
+  if (connection) {
+    return connection;
   }
 
-  // Initialize CDP client (automatically loads from environment variables)
-  cdp = new CdpClient();
+  const rpcUrl =
+    process.env.SOLANA_RPC_URL ||
+    (process.env.SOLANA_NETWORK === "mainnet-beta"
+      ? "https://api.mainnet-beta.solana.com"
+      : "https://api.devnet.solana.com");
 
-  // Get the existing server account by address (used for bid refunds)
-  const serverAddress = process.env.ADDRESS;
-  if (!serverAddress) {
-    throw new Error('ADDRESS not set in environment');
-  }
-
-  serverAccount = await cdp.evm.getAccount({
-    address: serverAddress as `0x${string}`
-  });
-
-  if (!serverAccount) {
-    throw new Error('Failed to initialize server account from CDP');
-  }
-
-  console.log(`✅ Server wallet initialized: ${serverAccount.address}`);
-
-  return { cdp, serverAccount };
+  connection = new Connection(rpcUrl, "confirmed");
+  console.log(`✅ Solana connection initialized: ${rpcUrl}`);
+  return connection;
 }
 
-export async function getServerWalletClient() {
-  const serverPrivateKey = process.env.SERVER_WALLET_PRIVATE_KEY;
-  if (!serverPrivateKey) {
-    throw new Error('SERVER_WALLET_PRIVATE_KEY not set in environment');
+// Initialize server wallet from private key
+export function getServerKeypair(): Keypair {
+  if (serverKeypair) {
+    return serverKeypair;
   }
 
-  const account = privateKeyToAccount(serverPrivateKey as `0x${string}`);
+  const privateKey = process.env.SERVER_WALLET_PRIVATE_KEY;
+  if (!privateKey) {
+    throw new Error("SERVER_WALLET_PRIVATE_KEY not set in environment");
+  }
 
-  // Create wallet client with public actions for x402
-  // Type is intentionally inferred to ensure compatibility with x402's Signer type
-  const walletClient = createWalletClient({
-    account,
-    chain: baseSepolia,
-    transport: http(),
-  }).extend(publicActions);
+  // Support both base58 encoded and hex format
+  let secretKey: Uint8Array;
+  try {
+    // Try base58 first (Solana standard)
+    secretKey = bs58.decode(privateKey);
+  } catch {
+    // If that fails, try hex (for compatibility)
+    if (privateKey.startsWith("0x")) {
+      secretKey = new Uint8Array(Buffer.from(privateKey.slice(2), "hex"));
+    } else {
+      secretKey = new Uint8Array(Buffer.from(privateKey, "hex"));
+    }
+  }
 
-  return walletClient;
+  serverKeypair = Keypair.fromSecretKey(secretKey);
+  console.log(
+    `✅ Server wallet initialized: ${serverKeypair.publicKey.toBase58()}`
+  );
+  return serverKeypair;
 }
 
-export async function getWalletBalance(): Promise<{ eth: string; usdc: string }> {
-  const { serverAccount } = await initializeWallet();
+// Get server wallet client for x402 (returns Keypair as Signer)
+export async function getServerWalletClient(): Promise<Keypair> {
+  return getServerKeypair();
+}
 
-  // Create public client to read balances
-  const publicClient = createPublicClient({
-    chain: baseSepolia,
-    transport: http(),
-  });
+// Get wallet balance (SOL and USDC)
+export async function getWalletBalance(): Promise<{
+  sol: string;
+  usdc: string;
+}> {
+  const conn = getConnection();
+  const keypair = getServerKeypair();
+  const publicKey = keypair.publicKey;
 
-  // Get ETH balance
-  const ethBalance = await publicClient.getBalance({
-    address: serverAccount.address as `0x${string}`,
-  });
+  // Get SOL balance
+  const solBalance = await conn.getBalance(publicKey);
 
-  // Get USDC balance
-  const usdcBalance = await publicClient.readContract({
-    address: USDC_BASE_SEPOLIA,
-    abi: ERC20_ABI,
-    functionName: 'balanceOf',
-    args: [serverAccount.address as `0x${string}`],
-  });
+  // Get USDC balance (SPL token)
+  const network = process.env.SOLANA_NETWORK || "devnet";
+  const usdcMint =
+    network === "mainnet-beta" ? SOLANA_MAINNET_USDC : SOLANA_DEVNET_USDC;
+  const usdcMintPubkey = new PublicKey(usdcMint);
+
+  let usdcBalance = 0;
+  try {
+    const tokenAccount = await getAssociatedTokenAddress(
+      usdcMintPubkey,
+      publicKey
+    );
+    const accountInfo = await getAccount(conn, tokenAccount);
+    usdcBalance = Number(accountInfo.amount);
+  } catch (error) {
+    // Token account doesn't exist, balance is 0
+    usdcBalance = 0;
+  }
 
   return {
-    eth: (Number(ethBalance) / 1e18).toFixed(6),
-    usdc: (Number(usdcBalance) / 1e6).toFixed(6), // USDC has 6 decimals
+    sol: (solBalance / 1e9).toFixed(6), // SOL has 9 decimals
+    usdc: (usdcBalance / 1e6).toFixed(6), // USDC has 6 decimals
   };
 }
 
+// Send USDC refund (SPL token transfer)
 export async function sendRefund(
   toAddress: string,
   amountUSDC: number,
-  network: 'base-sepolia' = 'base-sepolia'
+  network: "devnet" | "mainnet-beta" = "devnet"
 ): Promise<string> {
-  const { cdp, serverAccount } = await initializeWallet();
+  const conn = getConnection();
+  const fromKeypair = getServerKeypair();
+  const toPubkey = new PublicKey(toAddress);
 
-  console.log(`💸 Sending USDC refund of ${amountUSDC} USDC to ${toAddress}...`);
+  console.log(
+    `💸 Sending USDC refund of ${amountUSDC} USDC to ${toAddress}...`
+  );
+
+  // Get USDC mint address
+  const usdcMint =
+    network === "mainnet-beta" ? SOLANA_MAINNET_USDC : SOLANA_DEVNET_USDC;
+  const usdcMintPubkey = new PublicKey(usdcMint);
+
+  // Get associated token addresses
+  const fromTokenAccount = await getAssociatedTokenAddress(
+    usdcMintPubkey,
+    fromKeypair.publicKey
+  );
+  const toTokenAccount = await getAssociatedTokenAddress(
+    usdcMintPubkey,
+    toPubkey
+  );
 
   // USDC has 6 decimals
   const amountInAtomicUnits = BigInt(Math.floor(amountUSDC * 1_000_000));
 
-  // Send USDC transfer using CDP SDK
-  // This is the economic signal that tells the agent they've been outbid
-  const { transactionHash } = await cdp.evm.sendTransaction({
-    address: serverAccount.address,
-    transaction: {
-      to: USDC_BASE_SEPOLIA,
-      data: encodeFunctionData({
-        abi: ERC20_ABI,
-        functionName: 'transfer',
-        args: [toAddress as `0x${string}`, amountInAtomicUnits],
-      }),
-    },
-    network: network,
-  });
+  // Create transfer instruction
+  const transferInstruction = createTransferInstruction(
+    fromTokenAccount,
+    toTokenAccount,
+    fromKeypair.publicKey,
+    amountInAtomicUnits
+  );
 
-  console.log(`✅ Refund sent! Tx: https://sepolia.basescan.org/tx/${transactionHash}`);
+  // Create and send transaction
+  const transaction = new Transaction().add(transferInstruction);
 
-  return transactionHash;
+  // Get recent blockhash
+  const { blockhash } = await conn.getLatestBlockhash();
+  transaction.recentBlockhash = blockhash;
+  transaction.feePayer = fromKeypair.publicKey;
+
+  // Sign and send transaction
+  const signature = await sendAndConfirmTransaction(
+    conn,
+    transaction,
+    [fromKeypair],
+    { commitment: "confirmed" }
+  );
+
+  const explorerUrl =
+    network === "mainnet-beta"
+      ? `https://solscan.io/tx/${signature}`
+      : `https://solscan.io/tx/${signature}?cluster=devnet`;
+
+  console.log(`✅ Refund sent! Tx: ${explorerUrl}`);
+
+  return signature;
 }
 
-export async function fundWalletFromFaucet(
-  network: 'base-sepolia' = 'base-sepolia',
-  token: 'eth' | 'usdc' = 'eth'
-): Promise<string> {
-  const { cdp, serverAccount } = await initializeWallet();
+// Initialize wallet (for compatibility with existing code)
+export async function initializeWallet() {
+  const keypair = getServerKeypair();
+  const balance = await getWalletBalance();
 
-  console.log(`🚰 Requesting ${token.toUpperCase()} from faucet for ${serverAccount.address}...`);
-
-  const { transactionHash } = await cdp.evm.requestFaucet({
-    address: serverAccount.address,
-    network,
-    token,
-  });
-
-  console.log(`✅ Faucet funded! Tx: https://sepolia.basescan.org/tx/${transactionHash}`);
-
-  return transactionHash;
+  return {
+    address: keypair.publicKey.toBase58(),
+    balance,
+  };
 }

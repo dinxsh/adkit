@@ -1,13 +1,12 @@
 import { AnalyticalBiddingAgent } from "./shared/analytical-agent";
 import dotenv from "dotenv";
-import { Hex } from "viem";
 
 dotenv.config({ path: "agents/.env" });
 
 console.log("\n🏦 Initializing Coinbase Developer Platform Agent...\n");
 
 const coinbaseCDPAgent = new AnalyticalBiddingAgent({
-  privateKey: process.env.AGENT_A_PRIVATE_KEY as Hex,
+  privateKey: process.env.AGENT_A_PRIVATE_KEY as string,
   agentName: "CoinbaseCDP",
   maxBid: null, // No hard limit - will be calculated based on analysis
   serverUrl: process.env.BID_SERVER_URL || "http://localhost:3000",
