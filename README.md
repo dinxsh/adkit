@@ -13,9 +13,10 @@ This project demonstrates **autonomous AI advertising agents** that use **x402 m
 ### The Demo
 
 **Analytical Ad Agents** - Two competing AI agents (Crossmint and Coinbase CDP) autonomously:
+
 1. **Research** websites by scraping content via Firecrawl (x402, ~$0.01)
 2. **Purchase** traffic analytics data from publishers (x402, $0.01)
-3. **Analyze** site relevance and ROI with Claude AI
+3. **Analyze** site relevance and ROI with Gemini AI
 4. **Compete** for advertising space through bidding (x402, $1-100)
 5. **Generate** creative ad images via Freepik (x402, ~$0.10)
 6. **Display** winning ads on the publisher's website
@@ -31,7 +32,7 @@ This project demonstrates **autonomous AI advertising agents** that use **x402 m
 - Node.js 18+
 - [Coinbase CDP Account](https://portal.cdp.coinbase.com/) (for server wallet)
 - [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) (free tier works)
-- [Anthropic API Key](https://console.anthropic.com/) (for AI agents)
+- [Google Gemini API Key](https://makersuite.google.com/app/apikey) (for AI agents)
 - [Firecrawl API Key](https://firecrawl.dev/) (for web scraping)
 - [Freepik API Key](https://www.freepik.com/api) (for image generation)
 
@@ -80,8 +81,8 @@ CDP_AGENT_PRIVATE_KEY=0x...  # Generate with: openssl rand -hex 32
 CDP_AGENT_NAME=CoinbaseCDPAgent
 CDP_MAX_BID=75
 
-# Anthropic AI
-ANTHROPIC_API_KEY=sk-ant-api03-...
+# Google Gemini AI
+GEMINI_API_KEY=your-gemini-api-key
 
 # Server
 SERVER_URL=http://localhost:3000
@@ -120,6 +121,7 @@ open http://localhost:3000/devnews
 ```
 
 You can also view detailed auction activity for specific ad spots at:
+
 ```
 http://localhost:3000/auction/devnews-banner
 http://localhost:3000/auction/devnews-sidebar
@@ -133,7 +135,7 @@ http://localhost:3000/auction/devnews-sidebar
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  AI Agents       ├─ Claude 3.5 Sonnet (LlamaIndex)         │
+│  AI Agents       ├─ Gemini 1.5 Pro (Vercel AI SDK)          │
 │  - Crossmint     ├─ x402-axios (auto payment handling)      │
 │  - CoinbaseCDP   ├─ Viem wallet (Base Sepolia + Mainnet)   │
 └─────────────────────────────────────────────────────────────┘
@@ -184,10 +186,10 @@ http://localhost:3000/auction/devnews-sidebar
 
 ### Two Network Architecture
 
-| Network        | Purpose                          | Payments                     |
-|----------------|----------------------------------|------------------------------|
-| Base Sepolia   | Ad bidding & analytics (testnet) | $0.01-100 USDC (test tokens) |
-| Base Mainnet   | External services (production)   | $0.01-0.50 USDC (real)       |
+| Network      | Purpose                          | Payments                     |
+| ------------ | -------------------------------- | ---------------------------- |
+| Base Sepolia | Ad bidding & analytics (testnet) | $0.01-100 USDC (test tokens) |
+| Base Mainnet | External services (production)   | $0.01-0.50 USDC (real)       |
 
 **Why?** Test bidding with free tokens, but pay real services (Firecrawl, Freepik) with real USDC.
 
@@ -198,6 +200,7 @@ http://localhost:3000/auction/devnews-sidebar
 ### Phase 1: Website Research ($0.01)
 
 Agents discover advertising opportunities by scraping publisher websites:
+
 - Pay Firecrawl via x402 to extract content
 - Analyze site topic, industry, and audience
 - Identify available ad spots
@@ -205,13 +208,15 @@ Agents discover advertising opportunities by scraping publisher websites:
 ### Phase 2: Analytics Purchase ($0.01)
 
 Agents pay the publisher for traffic data:
+
 - Request analytics via x402 payment to server
 - Receive visitor counts, demographics, engagement metrics
 - Store data for AI analysis
 
 ### Phase 3: AI Decision Making
 
-Claude AI analyzes the opportunity:
+Gemini AI analyzes the opportunity:
+
 - Evaluate site relevance to agent's brand
 - Calculate expected ROI based on traffic
 - Determine strategic bid amount (not hardcoded!)
@@ -220,6 +225,7 @@ Claude AI analyzes the opportunity:
 ### Phase 4: Economic Competition ($1-100)
 
 Agents bid on ad spots using x402:
+
 - Propose bid amount to server
 - Server responds 402 with exact price requirement
 - Agent pays via EIP-3009 authorization
@@ -229,6 +235,7 @@ Agents bid on ad spots using x402:
 ### Phase 5: Creative Generation ($0.10)
 
 Winning agent generates ad creative:
+
 - Pay Freepik via x402 for AI image generation
 - Provide brand-specific prompt
 - Receive production-ready ad image
@@ -236,6 +243,7 @@ Winning agent generates ad creative:
 ### Phase 6: Ad Display
 
 Publisher automatically displays winning ad:
+
 - Frontend polls for `ad_image_ready` events
 - Renders winning agent's creative
 - Shows brand, image, and ad spot metadata
@@ -253,7 +261,7 @@ Traditional: Webhooks, polling, external event systems
 // Agent detects refund automatically
 const newBalance = await getUSDCBalance();
 if (newBalance > lastBalance) {
-  console.log('🔔 REFUND DETECTED - I was outbid!');
+  console.log("🔔 REFUND DETECTED - I was outbid!");
   // Re-evaluate strategy and potentially re-bid
 }
 ```
@@ -261,6 +269,7 @@ if (newBalance > lastBalance) {
 ### 2. Multi-Service Composition
 
 Same agent, same wallet, multiple x402 services:
+
 - Firecrawl (scraping)
 - Publisher (analytics + bidding)
 - Freepik (image generation)
@@ -270,6 +279,7 @@ No integration complexity - x402 handles all payment flows uniformly.
 ### 3. Research-Driven Budgeting
 
 Not hardcoded:
+
 ```
 Agent spends $0.02 on research →
 Analyzes data with AI →
@@ -282,6 +292,7 @@ Real cost-benefit analysis in every decision.
 ### 4. Autonomous End-to-End
 
 From research to creative generation, agents:
+
 - ✓ Pay for their own data
 - ✓ Make strategic decisions
 - ✓ Compete economically
@@ -293,7 +304,7 @@ From research to creative generation, agents:
 ## Tech Stack
 
 - **Framework**: Next.js 15 (App Router, Turbopack)
-- **AI**: LlamaIndex (ReActAgent), Anthropic Claude 3.5 Sonnet
+- **AI**: Vercel AI SDK, Google Gemini 1.5 Pro
 - **Blockchain**: Coinbase CDP SDK, Viem, Wagmi
 - **Payments**: x402 protocol (x402-axios, x402-hono)
 - **Database**: MongoDB Atlas
@@ -308,17 +319,19 @@ From research to creative generation, agents:
 ### Agent Layer (Intelligent Decision-Making)
 
 **Built with**:
-- **LlamaIndex ReActAgent**: Tool orchestration framework
-- **Claude 3.5 Sonnet**: Strategic reasoning and decision-making
+
+- **Vercel AI SDK**: Tool calling framework with generateText
+- **Gemini 1.5 Pro**: Strategic reasoning and decision-making
 - **x402-axios**: Automatic 402 interception and payment handling
 - **Viem**: Wallet management (private keys → EIP-3009 signatures)
 
 **Agent Lifecycle**:
+
 ```typescript
 1. Initialize → Load brand identity, wallet, budget constraints
 2. Discover → Scrape websites to find ad opportunities
 3. Research → Purchase analytics data from publishers
-4. Analyze → Use Claude AI to evaluate ROI
+4. Analyze → Use Gemini AI to evaluate ROI
 5. Compete → Bid on promising ad spots
 6. Monitor → Detect refunds (economic signals)
 7. Generate → Create ad creative if won
@@ -326,9 +339,10 @@ From research to creative generation, agents:
 ```
 
 **Tools Available**:
+
 - `scrapeWebsite()` - Firecrawl integration (x402)
 - `fetchAnalytics()` - Publisher data (x402)
-- `analyzeAndDecide()` - Claude AI analysis
+- `analyzeAndDecide()` - Gemini AI analysis
 - `placeBid()` - Bid on ad spot (x402)
 - `checkBalance()` - Monitor for refunds
 - `generateAdImage()` - Freepik integration (x402)
@@ -336,6 +350,7 @@ From research to creative generation, agents:
 ### Server Layer (Payment & State Management)
 
 **Built with**:
+
 - **Next.js 15**: App Router, API routes
 - **x402-hono**: 402 response middleware
 - **CDP Server Wallet v2**: Receives payments, sends refunds
@@ -343,14 +358,15 @@ From research to creative generation, agents:
 
 **Core Endpoints**:
 
-| Endpoint | Method | x402? | Purpose |
-|----------|--------|-------|---------|
-| `/api/bid/[adSpotId]` | POST | ✓ | Accept bids with payment |
-| `/api/site-analytics` | GET | ✓ | Sell analytics data to agents |
-| `/api/generate-ad-image` | POST | ✓ | Proxy to Freepik with agent payment |
-| `/api/events/[adSpotId]` | GET | ✗ | Polling endpoint for frontend |
+| Endpoint                 | Method | x402? | Purpose                             |
+| ------------------------ | ------ | ----- | ----------------------------------- |
+| `/api/bid/[adSpotId]`    | POST   | ✓     | Accept bids with payment            |
+| `/api/site-analytics`    | GET    | ✓     | Sell analytics data to agents       |
+| `/api/generate-ad-image` | POST   | ✓     | Proxy to Freepik with agent payment |
+| `/api/events/[adSpotId]` | GET    | ✗     | Polling endpoint for frontend       |
 
 **Settlement Lock Pattern**:
+
 ```typescript
 // Prevent "replacement transaction underpriced" errors
 const settlementLocks = new Map<string, Promise<any>>();
@@ -367,6 +383,7 @@ settlementLocks.set(adSpotId, settlementPromise);
 **Collections**:
 
 **`adSpotRecords`**:
+
 ```typescript
 {
   adSpotId: "devnews-banner",
@@ -378,6 +395,7 @@ settlementLocks.set(adSpotId, settlementPromise);
 ```
 
 **`analyticalEvents`** (for polling):
+
 ```typescript
 {
   adSpotId: "devnews-banner",
@@ -393,16 +411,19 @@ settlementLocks.set(adSpotId, settlementPromise);
 ### Frontend Layer (Real-Time Observability)
 
 **Built with**:
+
 - **React 19**: Server Components + Client Components
 - **Polling**: Fetch `/api/events/[adSpotId]` every 2 seconds
 - **Tailwind CSS 4**: Grayscale, terminal-style UI
 
 **Pages**:
+
 - `/analytical-agents` - Terminal panels showing both agents' activity
 - `/devnews` - Mock publisher site displaying winning ads
 - `/auction/[adSpotId]` - Detailed auction feed for specific ad spots
 
 **Event Flow**:
+
 ```
 Server broadcasts event → MongoDB →
 Frontend polls (2s) → React state update → UI renders
@@ -456,18 +477,21 @@ open https://sepolia.basescan.org/tx/[TX_HASH]
 ## What This Demonstrates
 
 ### For x402:
+
 - **Versatility**: Handles $0.01 micropayments to $100 bids
 - **Composability**: Agents combine multiple x402 services seamlessly
 - **Coordination**: Economic signals (refunds) enable agent-to-agent interaction
 - **Production Ready**: Real payments on real services with real outcomes
 
 ### For AI Agents:
+
 - **Economic Actors**: Agents invest in information, analyze ROI, compete strategically
 - **Practical Utility**: Not a toy - real websites, real analytics, real advertising
 - **Observable Intelligence**: Humans watch agents think and make decisions
 - **Autonomous Commerce**: End-to-end workflows without human intervention
 
 ### For the Future:
+
 - **Agent-to-Agent Markets**: Brands hire AI agents who discover opportunities and compete
 - **Dynamic Pricing**: Publishers sell data/services via x402 (no pre-negotiation needed)
 - **Economic Coordination**: Payments as signals eliminate polling/webhooks/contracts
@@ -485,6 +509,7 @@ MIT
 Contributions welcome! This is a demonstration project showcasing x402 capabilities.
 
 **Areas for Contribution**:
+
 - Additional agent strategies (aggressive, conservative, adaptive)
 - More x402 service integrations (research, analytics, creative)
 - Enhanced UI/visualization (graphs, charts, history)
@@ -498,10 +523,11 @@ See [CLAUDE.md](./CLAUDE.md) for development guidelines.
 ## Acknowledgments
 
 Built with:
+
 - [x402 Protocol](https://x402.org/) - HTTP payments
 - [Coinbase CDP](https://www.coinbase.com/cloud/products/developer-platform) - Server wallets
-- [Anthropic Claude](https://www.anthropic.com/claude) - AI reasoning
-- [LlamaIndex](https://www.llamaindex.ai/) - Agent framework
+- [Google Gemini](https://deepmind.google/technologies/gemini/) - AI reasoning
+- [Vercel AI SDK](https://sdk.vercel.ai/) - AI SDK with tool calling
 - [Firecrawl](https://firecrawl.dev/) - Web scraping
 - [Freepik](https://www.freepik.com/) - AI image generation
 

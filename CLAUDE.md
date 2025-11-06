@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is an **autonomous AI bidding system** where intelligent agents compete for Basenames using the x402 payment protocol. Agents make strategic bidding decisions powered by Claude (Anthropic) and LlamaIndex, with blockchain payments via x402 on Base Sepolia.
+This is an **autonomous AI bidding system** where intelligent agents compete for Basenames using the x402 payment protocol. Agents make strategic bidding decisions powered by Google Gemini via Vercel AI SDK, with blockchain payments via x402 on Base Sepolia.
 
 **Core Innovation**: Refunds act as economic signals - when an agent is outbid, they receive a USDC refund which triggers automatic re-evaluation and counter-bidding.
 
@@ -13,6 +13,7 @@ This is an **autonomous AI bidding system** where intelligent agents compete for
 ### Three Main Components
 
 1. **Next.js Server** (`app/api/`)
+
    - Accepts bids via x402 payment protocol
    - Verifies and settles payments on-chain
    - Issues refunds to outbid agents
@@ -20,8 +21,9 @@ This is an **autonomous AI bidding system** where intelligent agents compete for
    - Manages auction state in MongoDB
 
 2. **Intelligent Agents** (`agents/`)
-   - Autonomous bidding agents powered by Claude AI
-   - Use LlamaIndex ReActAgent framework with custom tools
+
+   - Autonomous bidding agents powered by Gemini AI
+   - Use Vercel AI SDK with tool calling
    - Monitor blockchain for refunds (economic signals)
    - Make strategic decisions based on auction context
 
@@ -44,6 +46,7 @@ Previous bidder → Detects refund (balance increase) → Triggers re-bid
 ## Development Commands
 
 ### Server
+
 ```bash
 npm run dev              # Start Next.js server (localhost:3000)
 npm run build            # Production build with Turbopack
@@ -51,14 +54,16 @@ npm run lint             # ESLint
 ```
 
 ### Agents
+
 ```bash
 npm run agent:a          # Start simple Agent A
 npm run agent:b          # Start simple Agent B
-npm run agent:ai:a       # Start intelligent Agent A (requires ANTHROPIC_API_KEY)
-npm run agent:ai:b       # Start intelligent Agent B (requires ANTHROPIC_API_KEY)
+npm run agent:ai:a       # Start intelligent Agent A (requires GEMINI_API_KEY)
+npm run agent:ai:b       # Start intelligent Agent B (requires GEMINI_API_KEY)
 ```
 
 ### Wallet Management
+
 ```bash
 npm run fund             # Fund server wallet with ETH/USDC
 npm run fund:agents      # Fund agent wallets with USDC
@@ -66,6 +71,7 @@ tsx export-private-key.ts   # Export private key from CDP wallet
 ```
 
 ### Testing Workflow
+
 ```bash
 # Terminal 1
 npm run dev
@@ -85,6 +91,7 @@ open http://localhost:3000/devnews                        # Mock publisher site 
 ## Environment Setup
 
 ### Server (`.env.local`)
+
 ```bash
 # CDP Server Wallet
 CDP_API_KEY_ID=...
@@ -104,6 +111,7 @@ FACILITATOR_URL=https://x402.org/facilitator
 ```
 
 ### Agents (`agents/.env`)
+
 ```bash
 # Agent A
 AGENT_A_PRIVATE_KEY=0x...
@@ -115,8 +123,8 @@ AGENT_B_PRIVATE_KEY=0x...
 AGENT_B_NAME=AgentB
 AGENT_B_MAX_BID=15
 
-# Anthropic (note the BID_ prefix to avoid conflicts)
-BID_ANTHROPIC_API_KEY=sk-ant-...
+# Google Gemini (note the BID_ prefix to avoid conflicts)
+BID_GEMINI_API_KEY=your-gemini-api-key
 
 # Server
 BID_SERVER_URL=http://localhost:3000
@@ -128,6 +136,7 @@ BASENAME_TO_AUCTION=x402agent.base.eth
 ### Payment & Auction Logic
 
 - **`app/api/bid/[basename]/route.ts`**: Main bidding endpoint
+
   - Handles x402 payment verification & settlement
   - Implements proposal negotiation (X-Proposed-Bid header)
   - Manages refunds to outbid agents
@@ -135,6 +144,7 @@ BASENAME_TO_AUCTION=x402agent.base.eth
   - Stores events in MongoDB for frontend polling
 
 - **`lib/x402-config.ts`**: x402 configuration
+
   - Facilitator URL
   - Bid price calculation logic
   - Base Sepolia USDC address
@@ -147,6 +157,7 @@ BASENAME_TO_AUCTION=x402agent.base.eth
 ### Real-Time Events
 
 - **`lib/events.ts`**: Event storage system
+
   - Stores all auction events in MongoDB via `broadcastEvent()`
   - Event types: `thinking`, `bid_placed`, `reflection`, `refund`, `withdrawal`, `auction_ended`, `ad_image_ready`, `image_generation_update`
 
@@ -158,6 +169,7 @@ BASENAME_TO_AUCTION=x402agent.base.eth
 ### Database
 
 - **`lib/db.ts`**: MongoDB operations
+
   - `getBidRecord()`, `updateBidRecord()`, `addBidToHistory()`
   - Stores bid history, agent state, auction status
 
@@ -169,7 +181,8 @@ BASENAME_TO_AUCTION=x402agent.base.eth
 ### Intelligent Agents
 
 - **`agents/shared/intelligent-agent.ts`**: AI agent implementation
-  - LlamaIndex ReActAgent with Claude 3.5 Sonnet
+
+  - Vercel AI SDK with Google Gemini 1.5 Pro
   - Custom tools: `get-my-balance`, `get-auction-state`, `place-bid`, `withdraw`
   - Monitors USDC balance for refunds (economic signal detection)
   - Withdrawal detection via keyword analysis
@@ -181,17 +194,20 @@ BASENAME_TO_AUCTION=x402agent.base.eth
 ### Frontend
 
 - **`app/auction/[adSpotId]/page.tsx`**: Real-time auction UI
+
   - iMessage-style chat interface (grayscale)
   - Displays thinking bubbles, bid cards, reflections, refunds
   - Polls MongoDB every 2 seconds for live updates
   - Links to Basescan for transaction verification
 
 - **`app/analytical-agents/page.tsx`**: Analytical agent competition UI
+
   - Terminal-style interface showing multiple agents
   - Polls MongoDB for real-time event updates
   - Displays scraping, analytics, and bidding activity
 
 - **`app/components/AdSpotDisplay.tsx`**: Ad spot display component
+
   - Shows current winning ad image
   - Polls for `ad_image_ready` events
   - Used in auction page banner
@@ -204,6 +220,7 @@ BASENAME_TO_AUCTION=x402agent.base.eth
 ### Additional Features
 
 - **`app/api/refund-request/[basename]/route.ts`**: Withdrawal system
+
   - Allows agents to withdraw and request refunds
   - Validates only non-winning agents can withdraw
   - Ends auction when only 1 active bidder remains
@@ -215,25 +232,31 @@ BASENAME_TO_AUCTION=x402agent.base.eth
 ## Important Patterns
 
 ### Settlement Lock
+
 The server uses a settlement lock to prevent "replacement transaction underpriced" errors when multiple agents bid simultaneously:
+
 ```typescript
 const settlementLocks = new Map<string, Promise<any>>();
 // Agents wait for previous settlement before proceeding
 ```
 
 ### Economic Signaling
+
 Refunds trigger agent re-evaluation without polling:
+
 ```typescript
 // Agent monitors USDC balance every 2s
 const newBalance = await getUSDCBalance();
 if (newBalance > lastBalance) {
-  console.log('🔔 REFUND DETECTED');
+  console.log("🔔 REFUND DETECTED");
   // Re-evaluate and potentially re-bid
 }
 ```
 
 ### Proposal Negotiation
+
 Agents propose bid amounts before payment:
+
 ```typescript
 // Agent sends X-Proposed-Bid header
 // Server evaluates and returns 402 with negotiation context
@@ -241,6 +264,7 @@ Agents propose bid amounts before payment:
 ```
 
 ### Event Flow (MongoDB Polling)
+
 ```
 Agent thinks → store 'thinking' event → UI polls → UI shows bubble
 Agent pays → store 'bid_placed' event → UI polls → UI shows bid card (loading)
@@ -260,6 +284,7 @@ Server refunds → store 'refund' event → UI polls → UI shows notification
 ## x402 Integration
 
 **IMPORTANT**: When experiencing errors with x402 requests, use Context7 MCP:
+
 1. `resolve-library-id` for x402
 2. `get-library-docs` with the library ID
 3. Study current protocol specs for proper request formatting
@@ -267,32 +292,37 @@ Server refunds → store 'refund' event → UI polls → UI shows notification
 ### x402 Headers
 
 **Request Headers**:
+
 - `X-PAYMENT`: EIP-3009 payment authorization (created by x402-axios)
 - `X-Agent-ID`: Agent identifier for tracking
 - `X-Proposed-Bid`: Proposed bid amount (for negotiation)
 - `X-Strategy-Reasoning`: Agent's reasoning for proposal
 
 **Response Headers**:
+
 - `X-PAYMENT-RESPONSE`: Settlement response from facilitator
 
 ## Testing & Debugging
 
 ### Check Agent USDC Balance
+
 ```bash
 # View on Base Sepolia explorer
 open https://sepolia.basescan.org/address/[AGENT_WALLET_ADDRESS]
 ```
 
 ### Check Transaction
+
 ```bash
 # View settlement/refund transactions
 open https://sepolia.basescan.org/tx/[TX_HASH]
 ```
 
 ### MongoDB Queries
+
 ```javascript
 // View current auction state
-db.bidRecords.findOne({ basename: "x402agent.base.eth" })
+db.bidRecords.findOne({ basename: "x402agent.base.eth" });
 ```
 
 ### Common Issues
@@ -310,6 +340,7 @@ db.bidRecords.findOne({ basename: "x402agent.base.eth" })
 ## Withdrawal System
 
 Agents can dynamically withdraw from auctions:
+
 - LLM detects decision not to bid (keywords: "not to place", "withdrawing", "accept this loss")
 - Agent sends withdrawal request with reasoning
 - Server validates (can't withdraw if currently winning)
@@ -329,7 +360,7 @@ Agents can dynamically withdraw from auctions:
 - **Framework**: Next.js 15 (App Router)
 - **Blockchain**: Coinbase CDP SDK, viem, wagmi
 - **Payments**: x402 protocol (x402-axios, x402-hono)
-- **AI**: LlamaIndex, Anthropic Claude 3.5 Sonnet
+- **AI**: Vercel AI SDK, Google Gemini 1.5 Pro
 - **Database**: MongoDB Atlas
 - **Real-time**: MongoDB Polling (2-second intervals)
 - **Styling**: Tailwind CSS 4

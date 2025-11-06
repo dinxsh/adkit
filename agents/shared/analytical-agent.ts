@@ -1,7 +1,8 @@
-import { IntelligentBiddingAgent } from './intelligent-agent';
-import type { BrandIdentity } from './intelligent-agent';
-import { Hex } from 'viem';
-import { broadcastEvent } from '../../lib/events';
+import { IntelligentBiddingAgent } from "./intelligent-agent";
+import type { BrandIdentity } from "./intelligent-agent";
+import { Hex } from "viem";
+import { broadcastEvent } from "../../lib/events";
+import { generateText } from "ai";
 
 interface SiteAnalysisResult {
   content: string;
@@ -68,18 +69,24 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
    * AWAITS all broadcasts to ensure events are stored before continuing
    * Includes sequence number for gap detection
    */
-  private async broadcastToAllSpots(event: Record<string, unknown>): Promise<void> {
+  private async broadcastToAllSpots(
+    event: Record<string, unknown>
+  ): Promise<void> {
     this.eventSequence++;
     const eventWithSeq = {
       ...event,
-      eventSequence: this.eventSequence
+      eventSequence: this.eventSequence,
     };
 
-    console.log(`📡 [${this.agentName}] Broadcasting [${this.eventSequence}] ${event.type} to ${this.availableSpots.length} spot(s)...`);
-    await Promise.all(
-      this.availableSpots.map(spotId => broadcastEvent(spotId, eventWithSeq))
+    console.log(
+      `📡 [${this.agentName}] Broadcasting [${this.eventSequence}] ${event.type} to ${this.availableSpots.length} spot(s)...`
     );
-    console.log(`✅ [${this.agentName}] Event [${this.eventSequence}] ${event.type} broadcast complete`);
+    await Promise.all(
+      this.availableSpots.map((spotId) => broadcastEvent(spotId, eventWithSeq))
+    );
+    console.log(
+      `✅ [${this.agentName}] Event [${this.eventSequence}] ${event.type} broadcast complete`
+    );
   }
 
   constructor(config: {
@@ -87,14 +94,15 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
     agentName: string;
     maxBid?: number | null; // Optional/null for analytical agents
     serverUrl: string;
-    anthropicApiKey: string;
+    geminiApiKey: string;
     brandIdentity?: BrandIdentity;
     tunnelUrl?: string; // Optional tunnel URL (Cloudflare/ngrok) for exposing localhost
   }) {
     // Pass default maxBid if null (will be overridden by analysis)
     super({
       ...config,
-      maxBid: config.maxBid || 1000 // High default, will be calculated dynamically
+      maxBid: config.maxBid || 1000, // High default, will be calculated dynamically
+      geminiApiKey: config.geminiApiKey,
     });
 
     this.tunnelUrl = config.tunnelUrl;
@@ -103,16 +111,21 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
   /**
    * Scrape website using Firecrawl via x402-wrapped endpoint
    */
-  private async scrapeWebsite(url: string, adSpotId: string): Promise<SiteAnalysisResult> {
-    console.log(`\n🕷️  [${this.agentName}] Scraping ${url} with Firecrawl (via x402)...`);
+  private async scrapeWebsite(
+    url: string,
+    adSpotId: string
+  ): Promise<SiteAnalysisResult> {
+    console.log(
+      `\n🕷️  [${this.agentName}] Scraping ${url} with Firecrawl (via x402)...`
+    );
 
     // Broadcast scraping started to ALL spots (paying $0.01 USDC via x402)
     await this.broadcastToAllSpots({
-      type: 'scraping_started',
+      type: "scraping_started",
       agentId: this.agentName,
       url,
-      paymentMethod: 'x402',
-      expectedCost: '$0.01 USDC',
+      paymentMethod: "x402",
+      expectedCost: "$0.01 USDC",
       timestamp: new Date().toISOString(),
     });
 
@@ -123,15 +136,15 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
         process.env.FIRECRAWL_WRAPPED_ENDPOINT!,
         {
           url,
-          formats: ['markdown'],
+          formats: ["markdown"],
           onlyMainContent: true,
-          includeTags: ['article', 'main', 'h1', 'h2', 'h3', 'p'],
+          includeTags: ["article", "main", "h1", "h2", "h3", "p"],
           removeBase64Images: true,
         }
       );
 
       const data = response.data.data;
-      const markdown = data.markdown || '';
+      const markdown = data.markdown || "";
       const metadata = data.metadata || {};
 
       // Extract topics from content
@@ -139,18 +152,19 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
 
       console.log(`✅ [${this.agentName}] Site scraped successfully`);
       console.log(`   📄 Content length: ${markdown.length} chars`);
-      console.log(`   🏷️  Topics found: ${topics.join(', ')}`);
+      console.log(`   🏷️  Topics found: ${topics.join(", ")}`);
 
       // Broadcast scraping completed to ALL spots with content preview
-      const contentPreview = markdown.substring(0, 500) + (markdown.length > 500 ? '...' : '');
+      const contentPreview =
+        markdown.substring(0, 500) + (markdown.length > 500 ? "..." : "");
       await this.broadcastToAllSpots({
-        type: 'scraping_completed',
+        type: "scraping_completed",
         agentId: this.agentName,
         url,
         contentLength: markdown.length,
         contentPreview,
         topics,
-        siteTitle: metadata.title || 'Unknown',
+        siteTitle: metadata.title || "Unknown",
         timestamp: new Date().toISOString(),
       });
 
@@ -159,21 +173,20 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
         metadata: {
           title: metadata.title,
           description: metadata.description,
-          keywords: metadata.keywords
+          keywords: metadata.keywords,
         },
         topics,
         relevanceScore: 0, // Will be calculated by AI
-        audienceMatch: '' // Will be determined by AI
+        audienceMatch: "", // Will be determined by AI
       };
-
     } catch (error: any) {
       console.error(`❌ [${this.agentName}] Firecrawl error:`, error.message);
 
       // Broadcast error event
       await this.broadcastToAllSpots({
-        type: 'agent_error',
+        type: "agent_error",
         agentId: this.agentName,
-        phase: 'scraping',
+        phase: "scraping",
         error: error.message,
         timestamp: new Date().toISOString(),
       });
@@ -188,19 +201,47 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
   private extractTopics(markdown: string): string[] {
     const topics = new Set<string>();
     const keywords = [
-      'AI', 'Machine Learning', 'Cloud', 'DevOps', 'Kubernetes',
-      'TypeScript', 'JavaScript', 'Python', 'Rust', 'Go',
-      'Web3', 'Blockchain', 'Crypto', 'NFT', 'DeFi',
-      'API', 'Database', 'PostgreSQL', 'MongoDB', 'Redis',
-      'Docker', 'CI/CD', 'GitHub', 'GitLab',
-      'React', 'Next.js', 'Vue', 'Angular',
-      'Serverless', 'Edge Computing', 'Microservices',
-      'Security', 'Authentication', 'OAuth',
-      'Open Source', 'SaaS', 'Enterprise'
+      "AI",
+      "Machine Learning",
+      "Cloud",
+      "DevOps",
+      "Kubernetes",
+      "TypeScript",
+      "JavaScript",
+      "Python",
+      "Rust",
+      "Go",
+      "Web3",
+      "Blockchain",
+      "Crypto",
+      "NFT",
+      "DeFi",
+      "API",
+      "Database",
+      "PostgreSQL",
+      "MongoDB",
+      "Redis",
+      "Docker",
+      "CI/CD",
+      "GitHub",
+      "GitLab",
+      "React",
+      "Next.js",
+      "Vue",
+      "Angular",
+      "Serverless",
+      "Edge Computing",
+      "Microservices",
+      "Security",
+      "Authentication",
+      "OAuth",
+      "Open Source",
+      "SaaS",
+      "Enterprise",
     ];
 
-    keywords.forEach(keyword => {
-      const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+    keywords.forEach((keyword) => {
+      const regex = new RegExp(`\\b${keyword}\\b`, "gi");
       if (regex.test(markdown)) {
         topics.add(keyword);
       }
@@ -213,14 +254,16 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
    * Fetch site analytics with x402 payment
    */
   private async fetchAnalytics(adSpotId: string): Promise<AnalyticsData> {
-    console.log(`\n💰 [${this.agentName}] Fetching site analytics (will pay $0.01 USDC via x402)...`);
+    console.log(
+      `\n💰 [${this.agentName}] Fetching site analytics (will pay $0.01 USDC via x402)...`
+    );
 
     // Broadcast analytics payment started to ALL spots
     await this.broadcastToAllSpots({
-      type: 'analytics_payment',
+      type: "analytics_payment",
       agentId: this.agentName,
-      amount: '0.01 USDC',
-      paymentMethod: 'x402',
+      amount: "0.01 USDC",
+      paymentMethod: "x402",
       timestamp: new Date().toISOString(),
     });
 
@@ -231,14 +274,16 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
       );
 
       console.log(`✅ [${this.agentName}] Analytics received!`);
-      console.log(`   👥 Monthly visits: ${response.data.site.monthlyVisits.toLocaleString()}`);
+      console.log(
+        `   👥 Monthly visits: ${response.data.site.monthlyVisits.toLocaleString()}`
+      );
       console.log(`   🎯 Audience: ${response.data.demographics.audienceType}`);
 
       const analyticsData = response.data as AnalyticsData;
 
       // Broadcast analytics received with FULL data to ALL spots
       await this.broadcastToAllSpots({
-        type: 'analytics_received',
+        type: "analytics_received",
         agentId: this.agentName,
         site: {
           monthlyVisits: analyticsData.site.monthlyVisits,
@@ -247,27 +292,31 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
           bounceRate: analyticsData.site.bounceRate,
         },
         audience: analyticsData.demographics.audienceType,
-        adSpots: Object.entries(analyticsData.adSpots).map(([spotId, spot]) => ({
-          id: spotId,
-          name: spot.name,
-          impressions: spot.impressions,
-          clickThroughRate: spot.clickThroughRate,
-          estimatedClicks: spot.estimatedMonthlyClicks,
-          averageBid: spot.averageBid,
-        })),
+        adSpots: Object.entries(analyticsData.adSpots).map(
+          ([spotId, spot]) => ({
+            id: spotId,
+            name: spot.name,
+            impressions: spot.impressions,
+            clickThroughRate: spot.clickThroughRate,
+            estimatedClicks: spot.estimatedMonthlyClicks,
+            averageBid: spot.averageBid,
+          })
+        ),
         timestamp: new Date().toISOString(),
       });
 
       return response.data as AnalyticsData;
-
     } catch (error: any) {
-      console.error(`❌ [${this.agentName}] Analytics fetch error:`, error.message);
+      console.error(
+        `❌ [${this.agentName}] Analytics fetch error:`,
+        error.message
+      );
 
       // Broadcast error event
       await this.broadcastToAllSpots({
-        type: 'agent_error',
+        type: "agent_error",
         agentId: this.agentName,
-        phase: 'analytics',
+        phase: "analytics",
         error: error.message,
         timestamp: new Date().toISOString(),
       });
@@ -283,14 +332,14 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
     console.log(`\n🧠 [${this.agentName}] Analyzing opportunity with AI...`);
 
     if (!this.siteAnalysis || !this.analyticsData) {
-      throw new Error('Missing site analysis or analytics data');
+      throw new Error("Missing site analysis or analytics data");
     }
 
     const balance = await this.getUSDCBalance();
 
     // Broadcast analysis started with context data to ALL spots
     await this.broadcastToAllSpots({
-      type: 'analysis_started',
+      type: "analysis_started",
       agentId: this.agentName,
       analysisContext: {
         siteTopics: this.siteAnalysis.topics,
@@ -302,7 +351,9 @@ export class AnalyticalBiddingAgent extends IntelligentBiddingAgent {
       timestamp: new Date().toISOString(),
     });
 
-    const analysisPrompt = `You are ${this.agentName}, a marketing AI for ${this.brandIdentity?.brandName}.
+    const analysisPrompt = `You are ${this.agentName}, a marketing AI for ${
+      this.brandIdentity?.brandName
+    }.
 
 PRODUCT: ${this.brandIdentity?.productName}
 - Description: ${this.brandIdentity?.productDescription}
@@ -312,8 +363,10 @@ PRODUCT: ${this.brandIdentity?.productName}
 MISSION: Analyze this advertising opportunity and decide if/how to bid.
 
 SITE ANALYSIS:
-- Content Topics: ${this.siteAnalysis.topics.join(', ')}
-- Site Description: ${this.siteAnalysis.metadata.description || 'Technology news for developers'}
+- Content Topics: ${this.siteAnalysis.topics.join(", ")}
+- Site Description: ${
+      this.siteAnalysis.metadata.description || "Technology news for developers"
+    }
 
 SITE ANALYTICS:
 - Monthly Visits: ${this.analyticsData.site.monthlyVisits.toLocaleString()}
@@ -323,22 +376,39 @@ SITE ANALYTICS:
 - Bounce Rate: ${this.analyticsData.site.bounceRate}
 
 AVAILABLE AD SPOTS:
-${Object.entries(this.analyticsData.adSpots).map(([spotId, spot]) => `
+${Object.entries(this.analyticsData.adSpots)
+  .map(
+    ([spotId, spot]) => `
 - ${spot.name} (${spotId}):
   * Impressions: ${spot.impressions.toLocaleString()}/month
   * CTR: ${spot.clickThroughRate}
   * Est. Clicks: ${spot.estimatedMonthlyClicks.toLocaleString()}/month
   * Avg Bid: ${spot.averageBid}
-  * Cost per click: ${this.analyticsData!.pricing[spotId.replace('-', '')] ? this.analyticsData!.pricing[spotId.replace('-', '')]!.costPerClick : 'N/A'}
-  * Suggested Bid: ${this.analyticsData!.pricing[spotId.replace('-', '')] ? this.analyticsData!.pricing[spotId.replace('-', '')]!.suggestedOptimalBid : 'N/A'}
-`).join('\n')}
+  * Cost per click: ${
+    this.analyticsData!.pricing[spotId.replace("-", "")]
+      ? this.analyticsData!.pricing[spotId.replace("-", "")]!.costPerClick
+      : "N/A"
+  }
+  * Suggested Bid: ${
+    this.analyticsData!.pricing[spotId.replace("-", "")]
+      ? this.analyticsData!.pricing[spotId.replace("-", "")]!
+          .suggestedOptimalBid
+      : "N/A"
+  }
+`
+  )
+  .join("\n")}
 
 YOUR WALLET BALANCE: $${balance.toFixed(2)} USDC
 
 IMPORTANT DECISION CRITERIA:
-1. **Relevance**: Does this site's audience match our target (${this.brandIdentity?.targetAudience})?
+1. **Relevance**: Does this site's audience match our target (${
+      this.brandIdentity?.targetAudience
+    })?
 2. **ROI**: Given the traffic and CTR, is this worth the investment?
-3. **Budget**: How much should we allocate? (You have $${balance.toFixed(2)} available)
+3. **Budget**: How much should we allocate? (You have $${balance.toFixed(
+      2
+    )} available)
 4. **Strategy**: Which spot(s) should we target? Prime, secondary, both, or neither?
 
 CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no thoughts, no markdown - JUST THE JSON OBJECT.
@@ -359,34 +429,40 @@ RESPONSE FORMAT (JSON):
 Return ONLY the JSON object above. Do not include any other text.`;
 
     try {
-      // Use LLM directly instead of ReActAgent to avoid "Thought:" prefixes
-      const response = await this.llm.complete({ prompt: analysisPrompt });
+      // Use Vercel AI SDK to generate analysis
+      const { text } = await generateText({
+        model: this.model,
+        prompt: analysisPrompt,
+      });
+      const response = { text };
 
       // Extract JSON from response (handle markdown code blocks and "Thought:" prefixes)
       let jsonText = response.text.trim();
 
-      console.log(`\n🔍 [${this.agentName}] Raw AI response length: ${jsonText.length} chars`);
+      console.log(
+        `\n🔍 [${this.agentName}] Raw AI response length: ${jsonText.length} chars`
+      );
       console.log(`   First 100 chars: ${jsonText.substring(0, 100)}...`);
 
       // Remove markdown code blocks
-      if (jsonText.includes('```json')) {
-        jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?$/g, '');
-      } else if (jsonText.includes('```')) {
-        jsonText = jsonText.replace(/```\n?/g, '').replace(/```\n?$/g, '');
+      if (jsonText.includes("```json")) {
+        jsonText = jsonText.replace(/```json\n?/g, "").replace(/```\n?$/g, "");
+      } else if (jsonText.includes("```")) {
+        jsonText = jsonText.replace(/```\n?/g, "").replace(/```\n?$/g, "");
       }
 
       // Find the JSON object by counting braces
-      const jsonStart = jsonText.indexOf('{');
+      const jsonStart = jsonText.indexOf("{");
       if (jsonStart === -1) {
-        throw new Error('No JSON object found in response');
+        throw new Error("No JSON object found in response");
       }
 
       // Count braces to find the matching closing brace
       let braceCount = 0;
       let jsonEnd = -1;
       for (let i = jsonStart; i < jsonText.length; i++) {
-        if (jsonText[i] === '{') braceCount++;
-        if (jsonText[i] === '}') {
+        if (jsonText[i] === "{") braceCount++;
+        if (jsonText[i] === "}") {
           braceCount--;
           if (braceCount === 0) {
             jsonEnd = i;
@@ -396,7 +472,7 @@ Return ONLY the JSON object above. Do not include any other text.`;
       }
 
       if (jsonEnd === -1) {
-        throw new Error('No matching closing brace found');
+        throw new Error("No matching closing brace found");
       }
 
       jsonText = jsonText.substring(jsonStart, jsonEnd + 1).trim();
@@ -406,12 +482,18 @@ Return ONLY the JSON object above. Do not include any other text.`;
       const decision = JSON.parse(jsonText);
 
       console.log(`\n📊 [${this.agentName}] ANALYSIS COMPLETE`);
-      console.log(`   🎯 Should bid: ${decision.shouldBid ? 'YES' : 'NO'}`);
+      console.log(`   🎯 Should bid: ${decision.shouldBid ? "YES" : "NO"}`);
       console.log(`   ⭐ Relevance score: ${decision.relevanceScore}/10`);
-      console.log(`   💡 Reasoning: ${decision.reasoning ? decision.reasoning.substring(0, 200) + '...' : 'N/A'}`);
+      console.log(
+        `   💡 Reasoning: ${
+          decision.reasoning
+            ? decision.reasoning.substring(0, 200) + "..."
+            : "N/A"
+        }`
+      );
 
       if (decision.shouldBid) {
-        console.log(`   🎪 Target spots: ${decision.targetSpots.join(', ')}`);
+        console.log(`   🎪 Target spots: ${decision.targetSpots.join(", ")}`);
         console.log(`   💵 Budget allocation:`);
         Object.entries(decision.budgetPerSpot).forEach(([spot, budget]) => {
           console.log(`      • ${spot}: $${budget}`);
@@ -421,7 +503,7 @@ Return ONLY the JSON object above. Do not include any other text.`;
 
       // Broadcast analysis completed to ALL spots
       await this.broadcastToAllSpots({
-        type: 'analysis_completed',
+        type: "analysis_completed",
         agentId: this.agentName,
         shouldBid: decision.shouldBid,
         relevanceScore: decision.relevanceScore,
@@ -433,15 +515,14 @@ Return ONLY the JSON object above. Do not include any other text.`;
       });
 
       return decision;
-
     } catch (error: any) {
       console.error(`❌ [${this.agentName}] AI analysis error:`, error.message);
 
       // Broadcast error event
       await this.broadcastToAllSpots({
-        type: 'agent_error',
+        type: "agent_error",
         agentId: this.agentName,
-        phase: 'analysis',
+        phase: "analysis",
         error: error.message,
         timestamp: new Date().toISOString(),
       });
@@ -452,7 +533,7 @@ Return ONLY the JSON object above. Do not include any other text.`;
         reasoning: `Analysis failed: ${error.message}. Defaulting to not bidding for safety.`,
         targetSpots: [],
         budgetPerSpot: {},
-        strategy: 'No bidding due to analysis failure'
+        strategy: "No bidding due to analysis failure",
       };
     }
   }
@@ -460,30 +541,40 @@ Return ONLY the JSON object above. Do not include any other text.`;
   /**
    * Notify server that agent is skipping a spot
    */
-  private async notifySkippedSpot(adSpotId: string, reasoning: string): Promise<void> {
+  private async notifySkippedSpot(
+    adSpotId: string,
+    reasoning: string
+  ): Promise<void> {
     try {
-      console.log(`🚫 [${this.agentName}] Notifying server about skipping "${adSpotId}"`);
+      console.log(
+        `🚫 [${this.agentName}] Notifying server about skipping "${adSpotId}"`
+      );
 
       const response = await this.axiosWithPayment.post(
         `${this.serverUrl}/api/skip-spot/${adSpotId}`,
         {
           agentId: this.agentName,
           reasoning: reasoning,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         },
         {
           headers: {
-            'Content-Type': 'application/json',
-            'X-Agent-ID': this.agentName,
-          }
+            "Content-Type": "application/json",
+            "X-Agent-ID": this.agentName,
+          },
         }
       );
 
       if (response.status === 200) {
-        console.log(`✅ [${this.agentName}] Server notified about skipping "${adSpotId}"`);
+        console.log(
+          `✅ [${this.agentName}] Server notified about skipping "${adSpotId}"`
+        );
       }
     } catch (error: any) {
-      console.error(`❌ [${this.agentName}] Failed to notify skip for "${adSpotId}":`, error.message);
+      console.error(
+        `❌ [${this.agentName}] Failed to notify skip for "${adSpotId}":`,
+        error.message
+      );
     }
   }
 
@@ -492,23 +583,25 @@ Return ONLY the JSON object above. Do not include any other text.`;
    */
   async startAnalysis(adSpotIds: string[]): Promise<void> {
     console.log(`\n🚀 [${this.agentName}] Starting analytical agent...`);
-    console.log(`   📍 Available spots: ${adSpotIds.join(', ')}`);
+    console.log(`   📍 Available spots: ${adSpotIds.join(", ")}`);
 
     this.availableSpots = adSpotIds;
 
     // Use first spot for initial event broadcasting
-    const primarySpot = adSpotIds[0] || 'prime-banner';
+    const primarySpot = adSpotIds[0] || "prime-banner";
 
     // Set current ad spot for AI tools to use
     this.currentAdSpotId = primarySpot;
 
     console.log(`\n✅ [${this.agentName}] Starting analysis phase...`);
     console.log(`   💡 View live at: http://localhost:3000/analytical-agents`);
-    console.log(`   📖 All events stored in MongoDB and will replay when browser connects\n`);
+    console.log(
+      `   📖 All events stored in MongoDB and will replay when browser connects\n`
+    );
 
     // Broadcast agent started event to ALL spots
     await this.broadcastToAllSpots({
-      type: 'agent_started',
+      type: "agent_started",
       agentId: this.agentName,
       availableSpots: adSpotIds,
       brandName: this.brandIdentity?.brandName,
@@ -520,8 +613,15 @@ Return ONLY the JSON object above. Do not include any other text.`;
       // Phase 1: Scrape the site
       // Use tunnel URL if available (for Firecrawl to access localhost), otherwise use serverUrl
       const baseUrl = this.tunnelUrl || this.serverUrl;
-      console.log(`   🌐 Using ${this.tunnelUrl ? 'tunnel URL' : 'server URL'}: ${baseUrl}`);
-      this.siteAnalysis = await this.scrapeWebsite(`${baseUrl}/devnews`, primarySpot);
+      console.log(
+        `   🌐 Using ${
+          this.tunnelUrl ? "tunnel URL" : "server URL"
+        }: ${baseUrl}`
+      );
+      this.siteAnalysis = await this.scrapeWebsite(
+        `${baseUrl}/devnews`,
+        primarySpot
+      );
 
       // Phase 2: Fetch analytics (with x402 payment)
       this.analyticsData = await this.fetchAnalytics(primarySpot);
@@ -531,34 +631,50 @@ Return ONLY the JSON object above. Do not include any other text.`;
 
       // Phase 4: Handle skipped spots and start bidding if decision is positive
       const targetSpots = this.budgetDecision?.targetSpots || [];
-      const skippedSpots = adSpotIds.filter(spot => !targetSpots.includes(spot));
+      const skippedSpots = adSpotIds.filter(
+        (spot) => !targetSpots.includes(spot)
+      );
 
       // Notify server about ANY skipped spots
       if (skippedSpots.length > 0) {
-        console.log(`\n🚫 [${this.agentName}] Skipping ${skippedSpots.length} spot(s): ${skippedSpots.join(', ')}`);
+        console.log(
+          `\n🚫 [${this.agentName}] Skipping ${
+            skippedSpots.length
+          } spot(s): ${skippedSpots.join(", ")}`
+        );
         for (const skippedSpot of skippedSpots) {
-          await this.notifySkippedSpot(skippedSpot, this.budgetDecision.reasoning);
+          await this.notifySkippedSpot(
+            skippedSpot,
+            this.budgetDecision.reasoning
+          );
         }
       }
 
-      if (this.budgetDecision.shouldBid && this.budgetDecision.targetSpots.length > 0) {
-        console.log(`\n✅ [${this.agentName}] Analysis complete - Starting bidding phase!`);
+      if (
+        this.budgetDecision.shouldBid &&
+        this.budgetDecision.targetSpots.length > 0
+      ) {
+        console.log(
+          `\n✅ [${this.agentName}] Analysis complete - Starting bidding phase!`
+        );
 
         // Start bidding on first target spot
         const firstSpot = this.budgetDecision.targetSpots[0];
         console.log(`   🎯 Initially targeting: ${firstSpot}`);
 
         // Update maxBid based on analysis
-        const maxBudget = Math.max(...Object.values(this.budgetDecision.budgetPerSpot));
+        const maxBudget = Math.max(
+          ...Object.values(this.budgetDecision.budgetPerSpot)
+        );
         (this as any).maxBid = maxBudget;
 
         await this.startBidding(firstSpot);
-
       } else {
-        console.log(`\n⛔ [${this.agentName}] Decision: NOT BIDDING on ANY spots`);
+        console.log(
+          `\n⛔ [${this.agentName}] Decision: NOT BIDDING on ANY spots`
+        );
         console.log(`   Reason: ${this.budgetDecision.reasoning}`);
       }
-
     } catch (error: any) {
       console.error(`\n❌ [${this.agentName}] Startup error:`, error.message);
       console.error(`   Agent will not participate in bidding.`);
